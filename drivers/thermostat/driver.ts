@@ -10,16 +10,26 @@ class DaikinOneDriver extends Homey.Driver {
   async onPair(session: Homey.Driver.PairSession): Promise<void> {
     let api: DaikinOneApi | null = null;
 
+    this.log('[Pair] Session started');
+
     session.setHandler('login', async (data: { username: string; password: string }) => {
+      this.log('[Pair] login handler called');
+      this.log('[Pair] username:', data.username, 'password length:', data.password?.length);
+
       const email = data.username.trim();
       const integratorToken = data.password.trim();
 
       if (!email || !integratorToken) {
+        this.log('[Pair] login: missing email or token');
         throw new Error('Please enter both your email and integrator token.');
       }
 
-      api = new DaikinOneApi(email, integratorToken);
+      this.log('[Pair] login: creating API client for', email);
+      api = new DaikinOneApi(email, integratorToken, (...args: unknown[]) => this.log(...args));
+
+      this.log('[Pair] login: validating credentials...');
       const valid = await api.validate();
+      this.log('[Pair] login: validate returned', valid);
 
       if (!valid) {
         throw new Error(
@@ -27,21 +37,26 @@ class DaikinOneDriver extends Homey.Driver {
         );
       }
 
-      // Store credentials at the app level for all devices to share
       this.homey.settings.set('daikin_email', email);
       this.homey.settings.set('daikin_integrator_token', integratorToken);
+      this.log('[Pair] login: credentials stored, returning true');
 
       return true;
     });
 
     session.setHandler('list_devices', async () => {
+      this.log('[Pair] list_devices handler called');
+
       if (!api) {
+        this.log('[Pair] list_devices: no API client (login not completed)');
         throw new Error('Please complete the login step first.');
       }
 
+      this.log('[Pair] list_devices: fetching devices...');
       const devices = await api.getDevices();
+      this.log('[Pair] list_devices: got', devices.length, 'device(s)');
 
-      return devices.map((device) => ({
+      const result = devices.map((device) => ({
         name: device.name,
         data: {
           id: device.id,
@@ -52,6 +67,9 @@ class DaikinOneDriver extends Homey.Driver {
           locationName: device.locationName,
         },
       }));
+
+      this.log('[Pair] list_devices: returning', JSON.stringify(result));
+      return result;
     });
   }
 

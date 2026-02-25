@@ -1,7 +1,7 @@
 {
   "type": "enum",
   "title": {
-    "en": "Fan Circulate"
+    "en": "Fan"
   },
   "values": [
     { "id": "off", "title": { "en": "Off" } },

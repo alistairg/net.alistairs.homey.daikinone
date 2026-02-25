@@ -20,12 +20,12 @@ export const HOMEY_MODE_TO_DAIKIN: Record<string, number> = {
  * Equipment status descriptions (read-only).
  */
 export const EQUIPMENT_STATUS: Record<number, string> = {
-  0: 'Unknown',
+  0: 'Idle',
   1: 'Cooling',
   2: 'Dehumidifying',
   3: 'Heating',
   4: 'Fan',
-  5: 'Idle',
+  5: 'Auxiliary_heat',
 };
 
 /**

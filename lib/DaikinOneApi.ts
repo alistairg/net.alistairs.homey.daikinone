@@ -1,9 +1,10 @@
+import Homey from 'homey';
 import https from 'https';
 
 const BASE_URL = 'https://integrator-api.daikinskyport.com';
 
-// Injected at build time via env/config. Falls back to env var for local development.
-const API_KEY = process.env.DAIKIN_API_KEY ?? '__DAIKIN_API_KEY__';
+// env.json vars are exposed via Homey.env at runtime, process.env for build-time injection
+const API_KEY = Homey.env.DAIKIN_API_KEY ?? process.env.DAIKIN_API_KEY ?? '__DAIKIN_API_KEY__';
 
 const MAX_CONCURRENT_REQUESTS = 3;
 const TOKEN_REFRESH_MARGIN_MS = 2 * 60 * 1000; // Refresh 2 minutes before expiry
@@ -39,7 +40,6 @@ export interface DaikinDeviceState {
   tempOutdoor: number;
   humOutdoor: number;
   scheduleEnabled: boolean;
-  geofencingEnabled: boolean;
 }
 
 export interface DaikinMspPayload {
@@ -58,16 +58,20 @@ interface TokenData {
   expiresAt: number;
 }
 
+type LogFn = (...args: unknown[]) => void;
+
 export class DaikinOneApi {
   private email: string;
   private integratorToken: string;
   private tokenData: TokenData | null = null;
   private activeRequests = 0;
   private requestQueue: Array<{ resolve: () => void }> = [];
+  private log: LogFn;
 
-  constructor(email: string, integratorToken: string) {
+  constructor(email: string, integratorToken: string, log?: LogFn) {
     this.email = email;
     this.integratorToken = integratorToken;
+    this.log = log ?? console.log;
   }
 
   /**
@@ -75,10 +79,14 @@ export class DaikinOneApi {
    */
   async validate(): Promise<boolean> {
     try {
+      this.log('[API] validate: getting token...');
       await this.ensureToken();
-      await this.getDevices();
+      this.log('[API] validate: token OK, listing devices...');
+      const devices = await this.getDevices();
+      this.log('[API] validate: success, found', devices.length, 'device(s)');
       return true;
-    } catch {
+    } catch (err) {
+      this.log('[API] validate: FAILED:', err);
       return false;
     }
   }
@@ -87,7 +95,9 @@ export class DaikinOneApi {
    * List all locations and their thermostats.
    */
   async getDevices(): Promise<DaikinDeviceInfo[]> {
+    this.log('[API] getDevices: fetching /v1/devices');
     const locations = await this.request<DaikinLocation[]>('GET', '/v1/devices');
+    this.log('[API] getDevices: raw response:', JSON.stringify(locations).slice(0, 500));
     const devices: DaikinDeviceInfo[] = [];
     for (const location of locations) {
       for (const device of location.devices) {
@@ -97,6 +107,7 @@ export class DaikinOneApi {
         });
       }
     }
+    this.log('[API] getDevices: parsed', devices.length, 'device(s):', devices.map(d => `${d.name} (${d.id})`));
     return devices;
   }
 
@@ -133,9 +144,11 @@ export class DaikinOneApi {
 
   private async ensureToken(): Promise<string> {
     if (this.tokenData && Date.now() < this.tokenData.expiresAt - TOKEN_REFRESH_MARGIN_MS) {
+      this.log('[API] ensureToken: reusing cached token (expires in', Math.round((this.tokenData.expiresAt - Date.now()) / 1000), 's)');
       return this.tokenData.accessToken;
     }
 
+    this.log('[API] ensureToken: requesting new token for', this.email);
     const body = {
       email: this.email,
       integratorToken: this.integratorToken,
@@ -148,6 +161,7 @@ export class DaikinOneApi {
       tokenType: string;
     }>('POST', '/v1/token', body, false);
 
+    this.log('[API] ensureToken: got token, expires in', response.accessTokenExpiresIn, 's');
     this.tokenData = {
       accessToken: response.accessToken,
       expiresAt: Date.now() + response.accessTokenExpiresIn * 1000,
@@ -205,6 +219,9 @@ export class DaikinOneApi {
 
       const payload = body ? JSON.stringify(body) : undefined;
 
+      this.log(`[API] >>> ${method} ${url.pathname}`, useAuth ? '(auth)' : '(no-auth)', payload ? `body=${payload.slice(0, 200)}` : '');
+      this.log(`[API] >>> x-api-key: ${API_KEY.slice(0, 20)}...${API_KEY.slice(-10)} (${API_KEY.length} chars)`);
+
       const req = https.request(
         {
           hostname: url.hostname,
@@ -218,6 +235,9 @@ export class DaikinOneApi {
             data += chunk.toString();
           });
           res.on('end', () => {
+            this.log(`[API] <<< ${method} ${url.pathname} => ${res.statusCode} (${data.length} bytes)`);
+            this.log(`[API] <<< body: ${data.slice(0, 500)}`);
+
             if (res.statusCode === 200) {
               try {
                 resolve(JSON.parse(data) as T);
@@ -225,7 +245,6 @@ export class DaikinOneApi {
                 reject(new DaikinApiError('Invalid JSON response', res.statusCode));
               }
             } else if (res.statusCode === 401) {
-              // Token expired - clear it so next request re-authenticates
               this.tokenData = null;
               reject(new DaikinApiError('Access token expired or invalid', 401));
             } else if (res.statusCode === 429) {
@@ -247,6 +266,7 @@ export class DaikinOneApi {
       );
 
       req.on('error', (err) => {
+        this.log(`[API] !!! ${method} ${url.pathname} network error:`, err.message);
         reject(new DaikinApiError(`Network error: ${err.message}`, 0));
       });
 

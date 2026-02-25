@@ -3,9 +3,11 @@
   "version": "1.0.0",
   "main": "app.js",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && npm run copy-assets",
+    "copy-assets": "cp app.json .homeybuild/ && cp -r assets .homeybuild/ && cp -r drivers/thermostat/assets .homeybuild/drivers/thermostat/ && cp -r .homeycompose .homeybuild/ && cp .homeychangelog.json .homeybuild/ 2>/dev/null; true",
     "inject-key": "if [ -n \"$DAIKIN_API_KEY\" ]; then sed -i '' \"s/__DAIKIN_API_KEY__/$DAIKIN_API_KEY/g\" .homeybuild/lib/DaikinOneApi.js; fi",
-    "publish-build": "tsc && npm run inject-key"
+    "dev": "npm run build && export $(cat .env | xargs) && npm run inject-key && homey app run --skip-build",
+    "publish-build": "npm run build && npm run inject-key"
   },
   "devDependencies": {
     "@types/homey": "npm:homey-apps-sdk-v3-types",

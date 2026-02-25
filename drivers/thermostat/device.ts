@@ -45,7 +45,7 @@ class DaikinOneThermostat extends Homey.Device {
       POLL_INTERVAL_MS,
     );
 
-    // Register capability listeners for standard capabilities
+    // Register capability listeners
     this.registerCapabilityListener('target_temperature', (value: number) =>
       this.onTargetTemperature(value),
     );
@@ -58,9 +58,14 @@ class DaikinOneThermostat extends Homey.Device {
       this.onScheduleEnabled(value),
     );
 
-    // Register cool_setpoint listener if it's currently present
-    if (this.hasCapability('cool_setpoint')) {
-      this.registerCapabilityListener('cool_setpoint', (value: number) =>
+    // Register setpoint listeners if already present
+    if (this.hasCapability('target_temperature.heat')) {
+      this.registerCapabilityListener('target_temperature.heat', (value: number) =>
+        this.onHeatSetpoint(value),
+      );
+    }
+    if (this.hasCapability('target_temperature.cool')) {
+      this.registerCapabilityListener('target_temperature.cool', (value: number) =>
         this.onCoolSetpoint(value),
       );
     }
@@ -92,7 +97,7 @@ class DaikinOneThermostat extends Homey.Device {
     const email = this.homey.settings.get('daikin_email');
     const token = this.homey.settings.get('daikin_integrator_token');
     if (!email || !token) return null;
-    return new DaikinOneApi(email, token);
+    return new DaikinOneApi(email, token, (...args: unknown[]) => this.log(...args));
   }
 
   private clearPollTimer(): void {
@@ -144,21 +149,57 @@ class DaikinOneThermostat extends Homey.Device {
    * Add/remove capabilities dynamically based on the thermostat's features.
    */
   private async syncDynamicCapabilities(state: DaikinDeviceState): Promise<void> {
-    const currentMode = DAIKIN_MODE_TO_HOMEY[state.mode] ?? 'off';
-    const isAutoMode = currentMode === 'auto';
+    // target_temperature.heat: present when device supports heating
+    const supportsHeat = state.modeLimit === MODE_LIMIT.NONE ||
+                         state.modeLimit === MODE_LIMIT.ALL ||
+                         state.modeLimit === MODE_LIMIT.HEAT_ONLY;
 
-    // cool_setpoint: only present in auto mode
-    if (isAutoMode && !this.hasCapability('cool_setpoint')) {
-      await this.addCapability('cool_setpoint');
-      this.registerCapabilityListener('cool_setpoint', (value: number) =>
-        this.onCoolSetpoint(value),
+    if (supportsHeat && !this.hasCapability('target_temperature.heat')) {
+      await this.addCapability('target_temperature.heat');
+      this.registerCapabilityListener('target_temperature.heat', (value: number) =>
+        this.onHeatSetpoint(value),
       );
-    } else if (!isAutoMode && this.hasCapability('cool_setpoint')) {
-      await this.removeCapability('cool_setpoint');
+      this.log('Added target_temperature.heat');
+    } else if (!supportsHeat && this.hasCapability('target_temperature.heat')) {
+      await this.removeCapability('target_temperature.heat');
+      this.log('Removed target_temperature.heat');
     }
 
-    // Fan capabilities: only for unitary systems (fanCirculate exists and is meaningful)
-    // VRV and split systems don't support fan control
+    // target_temperature.cool: present when device supports cooling
+    const supportsCool = state.modeLimit === MODE_LIMIT.NONE ||
+                         state.modeLimit === MODE_LIMIT.ALL ||
+                         state.modeLimit === MODE_LIMIT.COOL_ONLY;
+
+    if (supportsCool && !this.hasCapability('target_temperature.cool')) {
+      await this.addCapability('target_temperature.cool');
+      this.registerCapabilityListener('target_temperature.cool', (value: number) =>
+        this.onCoolSetpoint(value),
+      );
+      this.log('Added target_temperature.cool');
+    } else if (!supportsCool && this.hasCapability('target_temperature.cool')) {
+      await this.removeCapability('target_temperature.cool');
+      this.log('Removed target_temperature.cool');
+    }
+
+    // Update setpoint options from device-reported limits
+    if (this.hasCapability('target_temperature.heat')) {
+      await this.setCapabilityOptions('target_temperature.heat', {
+        title: { en: 'Heating Target' },
+        min: state.setpointMinimum,
+        max: state.setpointMaximum,
+        step: 0.5,
+      });
+    }
+    if (this.hasCapability('target_temperature.cool')) {
+      await this.setCapabilityOptions('target_temperature.cool', {
+        title: { en: 'Cooling Target' },
+        min: state.setpointMinimum,
+        max: state.setpointMaximum,
+        step: 0.5,
+      });
+    }
+
+    // Fan capabilities: only for unitary systems
     const model = this.getStoreValue('model') as string;
     const supportsFan = this.deviceSupportsFan(model);
 
@@ -179,7 +220,7 @@ class DaikinOneThermostat extends Homey.Device {
       }
     }
 
-    // Emergency heat mode: update thermostat_mode values if available
+    // Update thermostat_mode enum values
     await this.syncThermostatModeValues(state);
   }
 
@@ -235,33 +276,16 @@ class DaikinOneThermostat extends Homey.Device {
 
     // Schedule & geofencing
     await this.safeSetCapabilityValue('schedule_enabled', state.scheduleEnabled);
-    await this.safeSetCapabilityValue('geofencing_enabled', state.geofencingEnabled);
 
-    // Target temperature: depends on mode
-    if (currentMode === 'heat' || currentMode === 'emergency_heat') {
-      await this.safeSetCapabilityValue('target_temperature', state.heatSetpoint);
-    } else if (currentMode === 'cool') {
-      await this.safeSetCapabilityValue('target_temperature', state.coolSetpoint);
-    } else if (currentMode === 'auto') {
-      // In auto mode, target_temperature is the heat setpoint
-      await this.safeSetCapabilityValue('target_temperature', state.heatSetpoint);
-      await this.safeSetCapabilityValue('cool_setpoint', state.coolSetpoint);
-    }
+    // Setpoint subcapabilities — always update both if present
+    await this.safeSetCapabilityValue('target_temperature.heat', state.heatSetpoint);
+    await this.safeSetCapabilityValue('target_temperature.cool', state.coolSetpoint);
 
-    // Update target_temperature min/max from device-reported limits
-    await this.setCapabilityOptions('target_temperature', {
-      min: state.setpointMinimum,
-      max: state.setpointMaximum,
-      step: 0.5,
-    });
-
-    if (this.hasCapability('cool_setpoint')) {
-      await this.setCapabilityOptions('cool_setpoint', {
-        min: state.setpointMinimum,
-        max: state.setpointMaximum,
-        step: 0.5,
-      });
-    }
+    // Main target_temperature ring: mode + equipment-aware display
+    // In heat/cool mode, shows the active setpoint. In auto, follows equipment status.
+    // When idle or off, shows room temp so the ring color goes neutral.
+    const targetTemp = this.resolveTargetTemperature(currentMode, statusKey, state);
+    await this.safeSetCapabilityValue('target_temperature', targetTemp);
 
     // Fan values (if supported)
     if (this.hasCapability('fan_circulate_mode')) {
@@ -284,26 +308,44 @@ class DaikinOneThermostat extends Homey.Device {
     const state = this.lastState;
     const currentMode = DAIKIN_MODE_TO_HOMEY[state.mode] ?? 'off';
 
-    let heatSetpoint = state.heatSetpoint;
-    let coolSetpoint = state.coolSetpoint;
-
-    if (currentMode === 'heat' || currentMode === 'emergency_heat') {
-      heatSetpoint = value;
-      // Ensure delta constraint
-      coolSetpoint = Math.max(coolSetpoint, value + state.setpointDelta);
-    } else if (currentMode === 'cool') {
-      coolSetpoint = value;
-      heatSetpoint = Math.min(heatSetpoint, value - state.setpointDelta);
-    } else if (currentMode === 'auto') {
-      // In auto mode, target_temperature controls heat setpoint
-      heatSetpoint = value;
-      coolSetpoint = Math.max(coolSetpoint, value + state.setpointDelta);
-    } else {
-      // Off mode - just store the value
-      return;
+    if (currentMode === 'off') {
+      throw new Error('Climate control is off. Turn on to adjust target.');
+    }
+    if (currentMode === 'auto') {
+      throw new Error('Auto climate control is active. Adjust the Heat and Cool setpoints as needed.');
     }
 
+    // Heat or cool mode — delegate to the relevant setpoint handler
+    if (currentMode === 'heat') {
+      await this.onHeatSetpoint(value);
+    } else {
+      await this.onCoolSetpoint(value);
+    }
+
+    // Keep the subcapability ring in sync
+    if (currentMode === 'heat') {
+      await this.safeSetCapabilityValue('target_temperature.heat', value);
+    } else {
+      await this.safeSetCapabilityValue('target_temperature.cool', value);
+    }
+  }
+
+  private async onHeatSetpoint(value: number): Promise<void> {
+    if (!this.api || !this.lastState) {
+      throw new Error('Device not ready');
+    }
+
+    const state = this.lastState;
+    const heatSetpoint = value;
+    const coolSetpoint = Math.max(state.coolSetpoint, value + state.setpointDelta);
+
     await this.sendMsp(state.mode, heatSetpoint, coolSetpoint);
+
+    // Optimistically sync main ring if we're in heat mode
+    const currentMode = DAIKIN_MODE_TO_HOMEY[state.mode] ?? 'off';
+    if (currentMode === 'heat') {
+      await this.safeSetCapabilityValue('target_temperature', value);
+    }
   }
 
   private async onCoolSetpoint(value: number): Promise<void> {
@@ -312,13 +354,16 @@ class DaikinOneThermostat extends Homey.Device {
     }
 
     const state = this.lastState;
-    let heatSetpoint = state.heatSetpoint;
     const coolSetpoint = value;
-
-    // Ensure delta constraint
-    heatSetpoint = Math.min(heatSetpoint, coolSetpoint - state.setpointDelta);
+    const heatSetpoint = Math.min(state.heatSetpoint, value - state.setpointDelta);
 
     await this.sendMsp(state.mode, heatSetpoint, coolSetpoint);
+
+    // Optimistically sync main ring if we're in cool mode
+    const currentMode = DAIKIN_MODE_TO_HOMEY[state.mode] ?? 'off';
+    if (currentMode === 'cool') {
+      await this.safeSetCapabilityValue('target_temperature', value);
+    }
   }
 
   private async onThermostatMode(value: string): Promise<void> {
@@ -330,6 +375,11 @@ class DaikinOneThermostat extends Homey.Device {
     const daikinMode = value === 'emergency_heat' ? 4 : (HOMEY_MODE_TO_DAIKIN[value] ?? 0);
 
     await this.sendMsp(daikinMode, state.heatSetpoint, state.coolSetpoint);
+
+    // Immediately update target_temperature to reflect the new mode
+    const statusKey = EQUIPMENT_STATUS[state.equipmentStatus]?.toLowerCase() ?? 'idle';
+    const targetTemp = this.resolveTargetTemperature(value, statusKey, state);
+    await this.safeSetCapabilityValue('target_temperature', targetTemp);
   }
 
   private async onScheduleEnabled(value: boolean): Promise<void> {
@@ -376,9 +426,6 @@ class DaikinOneThermostat extends Homey.Device {
 
   // ── Helpers ──────────────────────────────────────────────────
 
-  /**
-   * Send a mode/setpoint update and schedule a delayed poll to read back the result.
-   */
   private async sendMsp(mode: number, heatSetpoint: number, coolSetpoint: number): Promise<void> {
     if (!this.api) {
       throw new Error('Device not ready');
@@ -386,13 +433,11 @@ class DaikinOneThermostat extends Homey.Device {
 
     const deviceId = this.getData().id;
 
-    // Clamp setpoints to device limits
     const state = this.lastState;
     if (state) {
       heatSetpoint = this.clamp(heatSetpoint, state.setpointMinimum, state.setpointMaximum);
       coolSetpoint = this.clamp(coolSetpoint, state.setpointMinimum, state.setpointMaximum);
 
-      // Enforce minimum delta
       if (coolSetpoint - heatSetpoint < state.setpointDelta) {
         coolSetpoint = heatSetpoint + state.setpointDelta;
       }
@@ -402,9 +447,6 @@ class DaikinOneThermostat extends Homey.Device {
     this.scheduleDelayedPoll();
   }
 
-  /**
-   * After a write, wait the required 15 seconds then poll for updated state.
-   */
   private scheduleDelayedPoll(): void {
     if (this.writeInProgress) return;
     this.writeInProgress = true;
@@ -415,9 +457,6 @@ class DaikinOneThermostat extends Homey.Device {
     }, POST_WRITE_DELAY_MS);
   }
 
-  /**
-   * Set a capability value, only if the device has that capability.
-   */
   private async safeSetCapabilityValue(capability: string, value: unknown): Promise<void> {
     if (this.hasCapability(capability) && value !== undefined && value !== null) {
       await this.setCapabilityValue(capability, value).catch((err) =>
@@ -427,18 +466,34 @@ class DaikinOneThermostat extends Homey.Device {
   }
 
   /**
-   * Determine if the device model supports fan circulation control.
-   * VRV and split systems do not support fan control.
+   * Determine what target_temperature should display based on mode and equipment activity.
+   * Returns the active setpoint when heating/cooling, or room temp when idle/off (neutral ring).
    */
-  private deviceSupportsFan(model: string): boolean {
-    // ONEPLUS and TOUCH on unitary systems support fan control
-    // We can't determine the HVAC system type from the model alone,
-    // so we check if fanCirculate is meaningful in the state
-    if (!this.lastState) return false;
+  private resolveTargetTemperature(
+    mode: string,
+    equipmentStatus: string,
+    state: DaikinDeviceState,
+  ): number {
+    switch (mode) {
+      case 'heat':
+        return state.heatSetpoint;
+      case 'cool':
+        return state.coolSetpoint;
+      case 'auto':
+        if (equipmentStatus === 'heating' || equipmentStatus === 'auxiliary_heat') {
+          return state.heatSetpoint;
+        }
+        if (equipmentStatus === 'cooling' || equipmentStatus === 'dehumidifying') {
+          return state.coolSetpoint;
+        }
+        return state.tempIndoor;
+      default: // off
+        return state.tempIndoor;
+    }
+  }
 
-    // If the device reports fanCirculate values, it supports fan control
-    // VRV/split systems typically report 0 for fanCirculate and it's not writable
-    // The safest heuristic: if we've seen a non-zero fanCirculate or the model is known unitary
+  private deviceSupportsFan(_model: string): boolean {
+    if (!this.lastState) return false;
     return this.lastState.fanCirculate !== undefined;
   }
 

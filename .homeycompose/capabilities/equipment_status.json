@@ -8,7 +8,8 @@
     { "id": "cooling", "title": { "en": "Cooling" } },
     { "id": "dehumidifying", "title": { "en": "Dehumidifying" } },
     { "id": "heating", "title": { "en": "Heating" } },
-    { "id": "fan", "title": { "en": "Fan" } }
+    { "id": "fan", "title": { "en": "Fan" } },
+    { "id": "auxiliary_heat", "title": { "en": "Auxiliary Heat" } }
   ],
   "getable": true,
   "setable": false,
