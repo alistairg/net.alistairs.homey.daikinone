@@ -1,0 +1,15 @@
+{
+  "type": "enum",
+  "title": {
+    "en": "Fan Circulate"
+  },
+  "values": [
+    { "id": "off", "title": { "en": "Off" } },
+    { "id": "always", "title": { "en": "Always On" } },
+    { "id": "schedule", "title": { "en": "On Schedule" } }
+  ],
+  "getable": true,
+  "setable": true,
+  "uiComponent": "picker",
+  "icon": "/assets/capabilities/fan_circulate_mode.svg"
+}

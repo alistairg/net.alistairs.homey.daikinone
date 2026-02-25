@@ -1,0 +1,14 @@
+{
+  "name": "net.alistairs.daikinone",
+  "version": "1.0.0",
+  "main": "app.js",
+  "scripts": {
+    "build": "tsc",
+    "inject-key": "if [ -n \"$DAIKIN_API_KEY\" ]; then sed -i '' \"s/__DAIKIN_API_KEY__/$DAIKIN_API_KEY/g\" .homeybuild/lib/DaikinOneApi.js; fi",
+    "publish-build": "tsc && npm run inject-key"
+  },
+  "devDependencies": {
+    "@types/homey": "npm:homey-apps-sdk-v3-types",
+    "typescript": "^5.7.0"
+  }
+}

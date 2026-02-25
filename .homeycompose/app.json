@@ -1,0 +1,27 @@
+{
+  "id": "net.alistairs.daikinone",
+  "version": "1.0.0",
+  "compatibility": ">=5.0.0",
+  "sdk": 3,
+  "platforms": ["local"],
+  "brandColor": "#00A1E0",
+  "name": {
+    "en": "Daikin One"
+  },
+  "description": {
+    "en": "Control your Daikin One thermostats from Homey"
+  },
+  "category": "climate",
+  "tags": {
+    "en": ["thermostat", "daikin", "hvac", "climate", "daikin one"]
+  },
+  "images": {
+    "small": "/assets/images/small.png",
+    "large": "/assets/images/large.png",
+    "xlarge": "/assets/images/xlarge.png"
+  },
+  "author": {
+    "name": "Alistair"
+  },
+  "permissions": []
+}

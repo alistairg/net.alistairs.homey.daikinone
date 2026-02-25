@@ -1,0 +1,15 @@
+{
+  "type": "number",
+  "title": {
+    "en": "Outdoor Temperature"
+  },
+  "units": {
+    "en": "\u00b0C"
+  },
+  "chartType": "spline",
+  "decimals": 1,
+  "getable": true,
+  "setable": false,
+  "uiComponent": "sensor",
+  "icon": "/assets/capabilities/outdoor_temperature.svg"
+}

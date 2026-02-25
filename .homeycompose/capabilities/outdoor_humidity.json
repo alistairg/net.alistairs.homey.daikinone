@@ -1,0 +1,17 @@
+{
+  "type": "number",
+  "title": {
+    "en": "Outdoor Humidity"
+  },
+  "units": {
+    "en": "%"
+  },
+  "chartType": "spline",
+  "decimals": 0,
+  "min": 0,
+  "max": 100,
+  "getable": true,
+  "setable": false,
+  "uiComponent": "sensor",
+  "icon": "/assets/capabilities/outdoor_humidity.svg"
+}

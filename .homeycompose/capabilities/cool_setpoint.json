@@ -1,0 +1,18 @@
+{
+  "type": "number",
+  "title": {
+    "en": "Cool Setpoint"
+  },
+  "units": {
+    "en": "\u00b0C"
+  },
+  "chartType": "stepLine",
+  "decimals": 1,
+  "min": 10,
+  "max": 37,
+  "step": 0.5,
+  "getable": true,
+  "setable": true,
+  "uiComponent": "thermostat",
+  "icon": "/assets/capabilities/cool_setpoint.svg"
+}

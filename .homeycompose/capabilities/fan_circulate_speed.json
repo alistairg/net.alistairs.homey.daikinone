@@ -1,0 +1,15 @@
+{
+  "type": "enum",
+  "title": {
+    "en": "Fan Speed"
+  },
+  "values": [
+    { "id": "low", "title": { "en": "Low" } },
+    { "id": "medium", "title": { "en": "Medium" } },
+    { "id": "high", "title": { "en": "High" } }
+  ],
+  "getable": true,
+  "setable": true,
+  "uiComponent": "picker",
+  "icon": "/assets/capabilities/fan_circulate_speed.svg"
+}
