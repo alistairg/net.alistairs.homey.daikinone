@@ -36,7 +36,6 @@ Custom capabilities (`.homeycompose/capabilities/`):
 - `outdoor_temperature`, `outdoor_humidity` - outdoor sensors (read-only)
 - `fan_circulate_mode`, `fan_circulate_speed` - dynamically added only for unitary systems
 - `schedule_enabled` - toggle (note: mode/setpoint changes via API disable schedule as a side effect)
-- `geofencing_enabled` - read-only indicator
 
 ### Dynamic Capability Behaviour
 - `target_temperature.heat` and `.cool` added/removed based on `modeLimit`

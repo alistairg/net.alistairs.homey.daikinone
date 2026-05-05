@@ -16,6 +16,7 @@ function messageForValidateFailure(result: Exclude<ValidateResult, { ok: true }>
 class DaikinOneDriver extends Homey.Driver {
 
   async onInit(): Promise<void> {
+    await super.onInit();
     this.log('DaikinOneDriver initialized');
   }
 

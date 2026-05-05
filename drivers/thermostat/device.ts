@@ -37,6 +37,10 @@ class DaikinOneThermostat extends Homey.Device {
   private writeInProgress = false;
   private consecutiveFailures = 0;
   private registeredListeners = new Set<string>();
+  // Last setpoint min/max we wrote via setCapabilityOptions, so we can
+  // skip the no-op write on every poll. Residential thermostat limits
+  // basically never change at runtime.
+  private lastSetpointBounds: { min: number; max: number } | null = null;
 
   /**
    * Always reads from the app singleton, so credential changes during
@@ -47,6 +51,7 @@ class DaikinOneThermostat extends Homey.Device {
   }
 
   async onInit(): Promise<void> {
+    await super.onInit();
     this.log('DaikinOneThermostat initialized:', this.getName());
 
     if (!this.api) {
@@ -119,11 +124,13 @@ class DaikinOneThermostat extends Homey.Device {
   }
 
   async onDeleted(): Promise<void> {
+    await super.onDeleted();
     this.log('DaikinOneThermostat deleted:', this.getName());
     this.clearPollTimer();
   }
 
   async onUninit(): Promise<void> {
+    await super.onUninit();
     this.clearPollTimer();
   }
 
@@ -225,27 +232,40 @@ class DaikinOneThermostat extends Homey.Device {
       this.log('Removed target_temperature.cool');
     }
 
-    // Update setpoint options from device-reported limits
-    if (this.hasCapability('target_temperature.heat')) {
-      await this.setCapabilityOptions('target_temperature.heat', {
-        title: { en: 'Heating Target' },
+    // Update setpoint options from device-reported limits, but only when
+    // they actually change. Saves a write per capability per poll cycle.
+    const boundsChanged =
+      !this.lastSetpointBounds ||
+      this.lastSetpointBounds.min !== state.setpointMinimum ||
+      this.lastSetpointBounds.max !== state.setpointMaximum;
+
+    if (boundsChanged) {
+      if (this.hasCapability('target_temperature.heat')) {
+        await this.setCapabilityOptions('target_temperature.heat', {
+          title: { en: 'Heating Target' },
+          min: state.setpointMinimum,
+          max: state.setpointMaximum,
+          step: 0.5,
+        });
+      }
+      if (this.hasCapability('target_temperature.cool')) {
+        await this.setCapabilityOptions('target_temperature.cool', {
+          title: { en: 'Cooling Target' },
+          min: state.setpointMinimum,
+          max: state.setpointMaximum,
+          step: 0.5,
+        });
+      }
+      this.lastSetpointBounds = {
         min: state.setpointMinimum,
         max: state.setpointMaximum,
-        step: 0.5,
-      });
-    }
-    if (this.hasCapability('target_temperature.cool')) {
-      await this.setCapabilityOptions('target_temperature.cool', {
-        title: { en: 'Cooling Target' },
-        min: state.setpointMinimum,
-        max: state.setpointMaximum,
-        step: 0.5,
-      });
+      };
     }
 
-    // Fan capabilities: only for unitary systems
-    const model = this.getStoreValue('model') as string;
-    const supportsFan = this.deviceSupportsFan(model);
+    // Fan capabilities: only for unitary systems. Detection is via the
+    // API response (whether fanCirculate is present), not the model
+    // string — the API is the source of truth.
+    const supportsFan = this.lastStateHasFanData();
 
     for (const cap of FAN_CAPABILITIES) {
       if (supportsFan && !this.hasCapability(cap)) {
@@ -557,7 +577,7 @@ class DaikinOneThermostat extends Homey.Device {
     }
   }
 
-  private deviceSupportsFan(_model: string): boolean {
+  private lastStateHasFanData(): boolean {
     if (!this.lastState) return false;
     return this.lastState.fanCirculate !== undefined;
   }
