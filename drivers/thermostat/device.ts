@@ -20,11 +20,23 @@ const FAN_CAPABILITIES = ['fan_circulate_mode', 'fan_circulate_speed'] as const;
 // Emergency heat mode for Homey (only shown when hardware supports it)
 const EMERGENCY_HEAT_MODE = { id: 'emergency_heat', title: { en: 'Emergency Heat' } };
 
+// Tolerate this many consecutive transient poll failures before flipping the
+// device to unavailable. 401 (auth) is sticky regardless and bypasses this.
+const FAILURE_TOLERANCE = 3;
+
+// Spread of jitter applied to the poll interval so multiple devices don't
+// fire in lockstep. The Daikin API caps at 3 concurrent requests; with N
+// devices polling on the same tick we'd routinely exceed that.
+const POLL_JITTER_MS = 30_000;
+
 class DaikinOneThermostat extends Homey.Device {
 
   private pollTimer: NodeJS.Timeout | null = null;
+  private delayedPollTimer: NodeJS.Timeout | null = null;
   private lastState: DaikinDeviceState | null = null;
   private writeInProgress = false;
+  private consecutiveFailures = 0;
+  private registeredListeners = new Set<string>();
 
   /**
    * Always reads from the app singleton, so credential changes during
@@ -45,49 +57,65 @@ class DaikinOneThermostat extends Homey.Device {
     // Initial poll to get device state and configure capabilities
     await this.pollDeviceState();
 
-    // Start polling
+    // Start polling with a per-device random offset, so multiple devices
+    // don't all hit the API on the same tick.
+    const jitter = Math.floor(Math.random() * POLL_JITTER_MS);
     this.pollTimer = this.homey.setInterval(
       () => this.pollDeviceState().catch((err) => this.error('Poll error:', err)),
-      POLL_INTERVAL_MS,
+      POLL_INTERVAL_MS + jitter,
     );
 
-    // Register capability listeners
-    this.registerCapabilityListener('target_temperature', (value: number) =>
+    // Register capability listeners. Always-present capabilities go here;
+    // dynamic capabilities (heat/cool setpoints, fan) register from
+    // syncDynamicCapabilities via registerCapabilityListenerOnce so that
+    // an addCapability cycle doesn't double-fire the listener.
+    this.registerCapabilityListenerOnce('target_temperature', (value: number) =>
       this.onTargetTemperature(value),
     );
 
-    this.registerCapabilityListener('thermostat_mode', (value: string) =>
+    this.registerCapabilityListenerOnce('thermostat_mode', (value: string) =>
       this.onThermostatMode(value),
     );
 
-    this.registerCapabilityListener('schedule_enabled', (value: boolean) =>
+    this.registerCapabilityListenerOnce('schedule_enabled', (value: boolean) =>
       this.onScheduleEnabled(value),
     );
 
-    // Register setpoint listeners if already present
     if (this.hasCapability('target_temperature.heat')) {
-      this.registerCapabilityListener('target_temperature.heat', (value: number) =>
+      this.registerCapabilityListenerOnce('target_temperature.heat', (value: number) =>
         this.onHeatSetpoint(value),
       );
     }
     if (this.hasCapability('target_temperature.cool')) {
-      this.registerCapabilityListener('target_temperature.cool', (value: number) =>
+      this.registerCapabilityListenerOnce('target_temperature.cool', (value: number) =>
         this.onCoolSetpoint(value),
       );
     }
-
-    // Register fan capability listeners if present
     if (this.hasCapability('fan_circulate_mode')) {
-      this.registerCapabilityListener('fan_circulate_mode', (value: string) =>
+      this.registerCapabilityListenerOnce('fan_circulate_mode', (value: string) =>
         this.onFanCirculateMode(value),
       );
     }
-
     if (this.hasCapability('fan_circulate_speed')) {
-      this.registerCapabilityListener('fan_circulate_speed', (value: string) =>
+      this.registerCapabilityListenerOnce('fan_circulate_speed', (value: string) =>
         this.onFanCirculateSpeed(value),
       );
     }
+  }
+
+  /**
+   * Idempotent capability listener registration. Homey's
+   * registerCapabilityListener doesn't deduplicate, so without this
+   * helper we'd attach a second handler whenever a dynamic capability
+   * gets removed and re-added (e.g. modeLimit changes at runtime).
+   */
+  private registerCapabilityListenerOnce(
+    capability: string,
+    listener: (value: any, opts?: any) => Promise<void>,
+  ): void {
+    if (this.registeredListeners.has(capability)) return;
+    this.registerCapabilityListener(capability, listener);
+    this.registeredListeners.add(capability);
   }
 
   async onDeleted(): Promise<void> {
@@ -104,6 +132,10 @@ class DaikinOneThermostat extends Homey.Device {
       this.homey.clearInterval(this.pollTimer);
       this.pollTimer = null;
     }
+    if (this.delayedPollTimer) {
+      this.homey.clearTimeout(this.delayedPollTimer);
+      this.delayedPollTimer = null;
+    }
   }
 
   // ── Polling ──────────────────────────────────────────────────
@@ -116,6 +148,7 @@ class DaikinOneThermostat extends Homey.Device {
       const state = await this.api.getDeviceState(deviceId);
 
       this.lastState = state;
+      this.consecutiveFailures = 0;
 
       // Configure dynamic capabilities based on device state
       await this.syncDynamicCapabilities(state);
@@ -128,18 +161,28 @@ class DaikinOneThermostat extends Homey.Device {
         await this.setAvailable();
       }
     } catch (err) {
+      // Auth failures are sticky — no point in tolerating them, the user
+      // needs to re-pair. Same for the panel reporting itself offline.
       if (err instanceof DaikinApiError) {
         if (err.statusCode === 401) {
           await this.setUnavailable('Authentication failed. Please re-pair the device.');
-        } else if (err.message === 'DeviceOfflineException') {
-          await this.setUnavailable('Thermostat is offline.');
-        } else {
-          this.error('API error during poll:', err.message);
-          await this.setUnavailable(`API error: ${err.message}`);
+          return;
         }
-      } else {
-        this.error('Unexpected poll error:', err);
-        await this.setUnavailable('Unable to reach Daikin One cloud.');
+        if (err.message === 'DeviceOfflineException') {
+          await this.setUnavailable('Thermostat is offline.');
+          return;
+        }
+      }
+
+      // Otherwise, transient failure — count it, only flip to unavailable
+      // after enough consecutive misses. Avoids UI flicker on momentary
+      // network blips and 429 backoffs.
+      this.consecutiveFailures++;
+      const reason = err instanceof Error ? err.message : String(err);
+      this.error(`Poll error (${this.consecutiveFailures}/${FAILURE_TOLERANCE}):`, reason);
+
+      if (this.consecutiveFailures >= FAILURE_TOLERANCE) {
+        await this.setUnavailable(`Unable to reach Daikin One cloud: ${reason}`);
       }
     }
   }
@@ -155,12 +198,13 @@ class DaikinOneThermostat extends Homey.Device {
 
     if (supportsHeat && !this.hasCapability('target_temperature.heat')) {
       await this.addCapability('target_temperature.heat');
-      this.registerCapabilityListener('target_temperature.heat', (value: number) =>
+      this.registerCapabilityListenerOnce('target_temperature.heat', (value: number) =>
         this.onHeatSetpoint(value),
       );
       this.log('Added target_temperature.heat');
     } else if (!supportsHeat && this.hasCapability('target_temperature.heat')) {
       await this.removeCapability('target_temperature.heat');
+      this.registeredListeners.delete('target_temperature.heat');
       this.log('Removed target_temperature.heat');
     }
 
@@ -171,12 +215,13 @@ class DaikinOneThermostat extends Homey.Device {
 
     if (supportsCool && !this.hasCapability('target_temperature.cool')) {
       await this.addCapability('target_temperature.cool');
-      this.registerCapabilityListener('target_temperature.cool', (value: number) =>
+      this.registerCapabilityListenerOnce('target_temperature.cool', (value: number) =>
         this.onCoolSetpoint(value),
       );
       this.log('Added target_temperature.cool');
     } else if (!supportsCool && this.hasCapability('target_temperature.cool')) {
       await this.removeCapability('target_temperature.cool');
+      this.registeredListeners.delete('target_temperature.cool');
       this.log('Removed target_temperature.cool');
     }
 
@@ -206,16 +251,17 @@ class DaikinOneThermostat extends Homey.Device {
       if (supportsFan && !this.hasCapability(cap)) {
         await this.addCapability(cap);
         if (cap === 'fan_circulate_mode') {
-          this.registerCapabilityListener(cap, (value: string) =>
+          this.registerCapabilityListenerOnce(cap, (value: string) =>
             this.onFanCirculateMode(value),
           );
         } else {
-          this.registerCapabilityListener(cap, (value: string) =>
+          this.registerCapabilityListenerOnce(cap, (value: string) =>
             this.onFanCirculateSpeed(value),
           );
         }
       } else if (!supportsFan && this.hasCapability(cap)) {
         await this.removeCapability(cap);
+        this.registeredListeners.delete(cap);
       }
     }
 
@@ -299,6 +345,20 @@ class DaikinOneThermostat extends Homey.Device {
 
   // ── Command handlers ─────────────────────────────────────────
 
+  /**
+   * User-driven write to the main `target_temperature` ring.
+   *
+   * The capability fans out to either heatSetpoint or coolSetpoint
+   * depending on current mode, and we mirror back to the matching
+   * `target_temperature.{heat|cool}` subcapability so the dedicated
+   * ring stays consistent.
+   *
+   * No recursion: setCapabilityValue (used inside the handlers) does
+   * not fire the registered capability listener — Homey separates
+   * set-from-app from set-from-user. If you ever change one of the
+   * inner calls to triggerCapabilityListener, this becomes an infinite
+   * loop. See discussion in issue #8.
+   */
   private async onTargetTemperature(value: number): Promise<void> {
     if (!this.api || !this.lastState) {
       throw new Error('Device not ready');
@@ -314,17 +374,11 @@ class DaikinOneThermostat extends Homey.Device {
       throw new Error('Auto climate control is active. Adjust the Heat and Cool setpoints as needed.');
     }
 
-    // Heat or cool mode — delegate to the relevant setpoint handler
     if (currentMode === 'heat') {
       await this.onHeatSetpoint(value);
-    } else {
-      await this.onCoolSetpoint(value);
-    }
-
-    // Keep the subcapability ring in sync
-    if (currentMode === 'heat') {
       await this.safeSetCapabilityValue('target_temperature.heat', value);
     } else {
+      await this.onCoolSetpoint(value);
       await this.safeSetCapabilityValue('target_temperature.cool', value);
     }
   }
@@ -446,11 +500,23 @@ class DaikinOneThermostat extends Homey.Device {
     this.scheduleDelayedPoll();
   }
 
+  /**
+   * Schedule a state-resync poll {@link POST_WRITE_DELAY_MS} after a write.
+   *
+   * Daikin needs ~15s before the new state is reflected in /v1/devices.
+   * If a second write arrives during that window, we want to reset the
+   * timer (always poll 15s after the *most recent* write), not silently
+   * drop the follow-up. The previous implementation set
+   * writeInProgress=true and bailed out of subsequent calls, leaving the
+   * original timer to fire on potentially stale state.
+   */
   private scheduleDelayedPoll(): void {
-    if (this.writeInProgress) return;
+    if (this.delayedPollTimer) {
+      this.homey.clearTimeout(this.delayedPollTimer);
+    }
     this.writeInProgress = true;
-
-    this.homey.setTimeout(async () => {
+    this.delayedPollTimer = this.homey.setTimeout(async () => {
+      this.delayedPollTimer = null;
       this.writeInProgress = false;
       await this.pollDeviceState().catch((err) => this.error('Post-write poll error:', err));
     }, POST_WRITE_DELAY_MS);

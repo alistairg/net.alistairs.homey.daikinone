@@ -86,6 +86,11 @@ export class DaikinOneApi {
   // a second /v1/token request that would invalidate the first one.
   private refreshing: Promise<string> | null = null;
 
+  // Earliest timestamp at which the next request should fire. Set when the
+  // server returns 429 with a Retry-After header. Subsequent calls await
+  // this so we don't pile on more requests during the backoff window.
+  private nextAllowedRequestAt = 0;
+
   constructor(email: string, integratorToken: string, log?: LogFn) {
     this.email = email;
     this.integratorToken = integratorToken;
@@ -257,12 +262,25 @@ export class DaikinOneApi {
   }
 
   private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
+    await this.awaitRateLimitWindow();
     const token = await this.ensureToken();
     await this.acquireConcurrencySlot();
     try {
       return await this.httpRequest<T>(method, path, body, true, token);
     } finally {
       this.releaseConcurrencySlot();
+    }
+  }
+
+  /**
+   * If a 429 set a Retry-After timestamp, sleep until it elapses.
+   * Avoids hammering the API during a rate-limit window.
+   */
+  private async awaitRateLimitWindow(): Promise<void> {
+    const wait = this.nextAllowedRequestAt - Date.now();
+    if (wait > 0) {
+      this.log(`[API] backing off for ${Math.ceil(wait / 1000)}s (Retry-After)`);
+      await new Promise((resolve) => setTimeout(resolve, wait));
     }
   }
 
@@ -313,7 +331,24 @@ export class DaikinOneApi {
               this.tokenData = null;
               reject(new DaikinApiError('Access token expired or invalid', 401));
             } else if (res.statusCode === 429) {
-              reject(new DaikinApiError('Rate limit exceeded', 429));
+              // Honour Retry-After if the server provides one. Format is
+              // either seconds-as-integer or HTTP-date; we handle both.
+              // Default fallback is 60s if the header is absent or unparseable.
+              const retryAfter = res.headers['retry-after'];
+              let waitMs = 60_000;
+              if (typeof retryAfter === 'string') {
+                const asInt = parseInt(retryAfter, 10);
+                if (!Number.isNaN(asInt) && asInt > 0) {
+                  waitMs = asInt * 1000;
+                } else {
+                  const asDate = Date.parse(retryAfter);
+                  if (!Number.isNaN(asDate)) {
+                    waitMs = Math.max(0, asDate - Date.now());
+                  }
+                }
+              }
+              this.nextAllowedRequestAt = Date.now() + waitMs;
+              reject(new DaikinApiError(`Rate limit exceeded; backing off ${Math.ceil(waitMs / 1000)}s`, 429));
             } else {
               let message = `HTTP ${res.statusCode}`;
               try {
