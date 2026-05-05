@@ -60,6 +60,19 @@ interface TokenData {
 
 type LogFn = (...args: unknown[]) => void;
 
+/**
+ * Structured result from validate(). Lets callers (pair flow, repair flow,
+ * device init) distinguish credential errors from network errors from
+ * empty-account so they can show appropriate UX.
+ */
+export type ValidateResult =
+  | { ok: true; deviceCount: number }
+  | {
+      ok: false;
+      reason: 'invalid-credentials' | 'rate-limited' | 'network' | 'no-devices' | 'unknown';
+      message: string;
+    };
+
 export class DaikinOneApi {
   private email: string;
   private integratorToken: string;
@@ -68,6 +81,11 @@ export class DaikinOneApi {
   private requestQueue: Array<{ resolve: () => void }> = [];
   private log: LogFn;
 
+  // In-flight token refresh promise. When non-null, a refresh is already
+  // underway and concurrent callers should await it rather than racing
+  // a second /v1/token request that would invalidate the first one.
+  private refreshing: Promise<string> | null = null;
+
   constructor(email: string, integratorToken: string, log?: LogFn) {
     this.email = email;
     this.integratorToken = integratorToken;
@@ -75,20 +93,54 @@ export class DaikinOneApi {
   }
 
   /**
-   * Validate that the credentials are correct by attempting to get a token and list devices.
+   * Update the credentials this API instance uses. Invalidates any cached
+   * token. Used when the user re-pairs or updates settings.
    */
-  async validate(): Promise<boolean> {
+  setCredentials(email: string, integratorToken: string): void {
+    this.email = email;
+    this.integratorToken = integratorToken;
+    this.tokenData = null;
+    this.refreshing = null;
+  }
+
+  /**
+   * Validate that the credentials are correct by attempting to get a token
+   * and list devices. Returns a structured result so callers can show
+   * appropriate UX for the different failure modes.
+   */
+  async validate(): Promise<ValidateResult> {
+    let devices;
     try {
       this.log('[API] validate: getting token...');
       await this.ensureToken();
-      this.log('[API] validate: token OK, listing devices...');
-      const devices = await this.getDevices();
-      this.log('[API] validate: success, found', devices.length, 'device(s)');
-      return true;
     } catch (err) {
-      this.log('[API] validate: FAILED:', err);
-      return false;
+      if (err instanceof DaikinApiError) {
+        if (err.statusCode === 401 || err.statusCode === 403) {
+          return { ok: false, reason: 'invalid-credentials', message: err.message };
+        }
+        if (err.statusCode === 429) {
+          return { ok: false, reason: 'rate-limited', message: err.message };
+        }
+        if (err.statusCode === 0) {
+          return { ok: false, reason: 'network', message: err.message };
+        }
+      }
+      return { ok: false, reason: 'unknown', message: err instanceof Error ? err.message : String(err) };
     }
+
+    try {
+      this.log('[API] validate: token OK, listing devices...');
+      devices = await this.getDevices();
+    } catch (err) {
+      return { ok: false, reason: 'unknown', message: err instanceof Error ? err.message : String(err) };
+    }
+
+    if (devices.length === 0) {
+      return { ok: false, reason: 'no-devices', message: 'No thermostats found in this Daikin One account.' };
+    }
+
+    this.log('[API] validate: success, found', devices.length, 'device(s)');
+    return { ok: true, deviceCount: devices.length };
   }
 
   /**
@@ -142,11 +194,27 @@ export class DaikinOneApi {
   }
 
   private async ensureToken(): Promise<string> {
+    // Cached and not expiring soon → use it
     if (this.tokenData && Date.now() < this.tokenData.expiresAt - TOKEN_REFRESH_MARGIN_MS) {
-      this.log('[API] ensureToken: reusing cached token (expires in', Math.round((this.tokenData.expiresAt - Date.now()) / 1000), 's)');
       return this.tokenData.accessToken;
     }
 
+    // A refresh is already in flight — wait for it instead of starting a second one.
+    // Without this, N concurrent requests after expiry would all fire /v1/token in
+    // parallel; the second login invalidates the first session and both retries fail.
+    if (this.refreshing) {
+      return this.refreshing;
+    }
+
+    this.refreshing = this.doRefresh();
+    try {
+      return await this.refreshing;
+    } finally {
+      this.refreshing = null;
+    }
+  }
+
+  private async doRefresh(): Promise<string> {
     this.log('[API] ensureToken: requesting new token');
     const body = {
       email: this.email,

@@ -1,5 +1,6 @@
 import Homey from 'homey';
 import { DaikinOneApi, DaikinDeviceState, DaikinApiError } from '../../lib/DaikinOneApi';
+import type DaikinOneApp from '../../app';
 import {
   DAIKIN_MODE_TO_HOMEY,
   HOMEY_MODE_TO_DAIKIN,
@@ -21,20 +22,25 @@ const EMERGENCY_HEAT_MODE = { id: 'emergency_heat', title: { en: 'Emergency Heat
 
 class DaikinOneThermostat extends Homey.Device {
 
-  private api: DaikinOneApi | null = null;
   private pollTimer: NodeJS.Timeout | null = null;
   private lastState: DaikinDeviceState | null = null;
   private writeInProgress = false;
 
+  /**
+   * Always reads from the app singleton, so credential changes during
+   * a session (e.g. user re-pairs) propagate without device restart.
+   */
+  private get api(): DaikinOneApi | null {
+    return (this.homey.app as DaikinOneApp).getApi();
+  }
+
   async onInit(): Promise<void> {
     this.log('DaikinOneThermostat initialized:', this.getName());
 
-    const api = this.getApi();
-    if (!api) {
+    if (!this.api) {
       await this.setUnavailable('No credentials configured. Please re-pair the device.');
       return;
     }
-    this.api = api;
 
     // Initial poll to get device state and configure capabilities
     await this.pollDeviceState();
@@ -91,13 +97,6 @@ class DaikinOneThermostat extends Homey.Device {
 
   async onUninit(): Promise<void> {
     this.clearPollTimer();
-  }
-
-  private getApi(): DaikinOneApi | null {
-    const email = this.homey.settings.get('daikin_email');
-    const token = this.homey.settings.get('daikin_integrator_token');
-    if (!email || !token) return null;
-    return new DaikinOneApi(email, token, (...args: unknown[]) => this.log(...args));
   }
 
   private clearPollTimer(): void {
