@@ -14,7 +14,6 @@ class DaikinOneDriver extends Homey.Driver {
 
     session.setHandler('login', async (data: { username: string; password: string }) => {
       this.log('[Pair] login handler called');
-      this.log('[Pair] username:', data.username, 'password length:', data.password?.length);
 
       const email = data.username.trim();
       const integratorToken = data.password.trim();
@@ -24,7 +23,7 @@ class DaikinOneDriver extends Homey.Driver {
         throw new Error('Please enter both your email and integrator token.');
       }
 
-      this.log('[Pair] login: creating API client for', email);
+      this.log('[Pair] login: creating API client');
       api = new DaikinOneApi(email, integratorToken, (...args: unknown[]) => this.log(...args));
 
       this.log('[Pair] login: validating credentials...');
@@ -68,7 +67,7 @@ class DaikinOneDriver extends Homey.Driver {
         },
       }));
 
-      this.log('[Pair] list_devices: returning', JSON.stringify(result));
+      this.log('[Pair] list_devices: returning', result.length, 'device(s)');
       return result;
     });
   }
