@@ -1,5 +1,8 @@
 {
   "1.0.0": {
     "en": "Initial release"
+  },
+  "1.0.1": {
+    "en": "Reliability and security improvements: tolerates transient network errors without flickering offline, properly backs off on rate limits, fixes a token-refresh race when multiple thermostats are paired, removes credential and PII logging."
   }
 }
