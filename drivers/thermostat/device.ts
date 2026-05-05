@@ -17,8 +17,10 @@ import {
 // Capabilities that only apply to unitary systems (not VRV/split)
 const FAN_CAPABILITIES = ['fan_circulate_mode', 'fan_circulate_speed'] as const;
 
-// Emergency heat mode for Homey (only shown when hardware supports it)
-const EMERGENCY_HEAT_MODE = { id: 'emergency_heat', title: { en: 'Emergency Heat' } };
+// Emergency heat mode for Homey (only shown when hardware supports it).
+// Frozen because this object is pushed into thermostat_mode's `values`
+// array via setCapabilityOptions — defensive against accidental mutation.
+const EMERGENCY_HEAT_MODE = Object.freeze({ id: 'emergency_heat', title: { en: 'Emergency Heat' } });
 
 // Tolerate this many consecutive transient poll failures before flipping the
 // device to unavailable. 401 (auth) is sticky regardless and bypasses this.

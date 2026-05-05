@@ -359,7 +359,8 @@ export class DaikinOneApi {
               } catch {
                 // Use default message
               }
-              reject(new DaikinApiError(message, res.statusCode ?? 0));
+              // -1 distinguishes "no response code" from a real status of 0.
+              reject(new DaikinApiError(message, res.statusCode ?? -1));
             }
           });
         },
