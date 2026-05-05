@@ -60,10 +60,6 @@ Custom capabilities (`.homeycompose/capabilities/`):
 - `homey app run --clean` — deploys to Homey Pro, wipes devices, triggers re-pairing
 - `app.json` in root is the composed manifest (must be kept in sync with driver.compose.json manually)
 
-## Hardware
-- User has 2 ONEPLUS thermostats: "Upstairs" and "Downstairs" at location "Home"
-- Both run firmware 3.9.16, modeLimit=1 (ALL modes), modeEmHeatAvailable=true
-
 ## Daikin API Reference
 See memory file for full API details. Key constraints:
 - Poll minimum: 3 minutes per device

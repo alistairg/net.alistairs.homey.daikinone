@@ -97,7 +97,6 @@ export class DaikinOneApi {
   async getDevices(): Promise<DaikinDeviceInfo[]> {
     this.log('[API] getDevices: fetching /v1/devices');
     const locations = await this.request<DaikinLocation[]>('GET', '/v1/devices');
-    this.log('[API] getDevices: raw response:', JSON.stringify(locations).slice(0, 500));
     const devices: DaikinDeviceInfo[] = [];
     for (const location of locations) {
       for (const device of location.devices) {
@@ -107,7 +106,7 @@ export class DaikinOneApi {
         });
       }
     }
-    this.log('[API] getDevices: parsed', devices.length, 'device(s):', devices.map(d => `${d.name} (${d.id})`));
+    this.log('[API] getDevices: parsed', devices.length, 'device(s)');
     return devices;
   }
 
@@ -148,7 +147,7 @@ export class DaikinOneApi {
       return this.tokenData.accessToken;
     }
 
-    this.log('[API] ensureToken: requesting new token for', this.email);
+    this.log('[API] ensureToken: requesting new token');
     const body = {
       email: this.email,
       integratorToken: this.integratorToken,
@@ -219,8 +218,7 @@ export class DaikinOneApi {
 
       const payload = body ? JSON.stringify(body) : undefined;
 
-      this.log(`[API] >>> ${method} ${url.pathname}`, useAuth ? '(auth)' : '(no-auth)', payload ? `body=${payload.slice(0, 200)}` : '');
-      this.log(`[API] >>> x-api-key: ${API_KEY.slice(0, 20)}...${API_KEY.slice(-10)} (${API_KEY.length} chars)`);
+      this.log(`[API] >>> ${method} ${url.pathname}`, useAuth ? '(auth)' : '(no-auth)');
 
       const req = https.request(
         {
@@ -236,7 +234,6 @@ export class DaikinOneApi {
           });
           res.on('end', () => {
             this.log(`[API] <<< ${method} ${url.pathname} => ${res.statusCode} (${data.length} bytes)`);
-            this.log(`[API] <<< body: ${data.slice(0, 500)}`);
 
             if (res.statusCode === 200) {
               try {
