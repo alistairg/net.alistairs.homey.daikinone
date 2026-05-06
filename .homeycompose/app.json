@@ -31,6 +31,14 @@
   "author": {
     "name": "Alistair Galbraith"
   },
+  "contributors": {
+    "developers": [
+      { "name": "Alistair Galbraith" }
+    ],
+    "translators": [
+      { "name": "Alistair Galbraith" }
+    ]
+  },
   "homeyCommunityTopicId": 154601,
   "permissions": []
 }
