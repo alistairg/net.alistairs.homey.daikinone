@@ -4,5 +4,8 @@
   },
   "1.0.1": {
     "en": "Reliability and security improvements: tolerates transient network errors without flickering offline, properly backs off on rate limits, fixes a token-refresh race when multiple thermostats are paired, removes credential and PII logging."
+  },
+  "1.0.2": {
+    "en": "Artwork refresh: new app and driver imagery; per-device thermostat icon based on hardware model (Daikin One Plus has its own icon variant separate from the rotary-dial One Touch)."
   }
 }
