@@ -25,9 +25,9 @@
     ]
   },
   "images": {
-    "small": "/assets/images/small.png",
-    "large": "/assets/images/large.png",
-    "xlarge": "/assets/images/xlarge.png"
+    "small": "/assets/images/app_sm.jpg",
+    "large": "/assets/images/app_lg.jpg",
+    "xlarge": "/assets/images/app_xl.jpg"
   },
   "author": {
     "name": "Alistair"
@@ -141,8 +141,9 @@
         }
       ],
       "images": {
-        "small": "/drivers/thermostat/assets/images/small.png",
-        "large": "/drivers/thermostat/assets/images/large.png"
+        "small": "/drivers/thermostat/assets/images/driver_s.jpg",
+        "large": "/drivers/thermostat/assets/images/driver_l.jpg",
+        "xlarge": "/drivers/thermostat/assets/images/driver_xl.jpg"
       },
       "id": "thermostat"
     }

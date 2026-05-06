@@ -1,4 +1,5 @@
 node_modules/
 .homeybuild/
+.homeybuild.broken-*/
 .env
 env.json

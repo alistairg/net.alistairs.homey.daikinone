@@ -1,0 +1,1 @@
+Manage and control Daikin air conditioning and heat pump services managed by Daikin One / Daikin Skyport

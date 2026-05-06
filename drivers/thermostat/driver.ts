@@ -13,6 +13,18 @@ function messageForValidateFailure(result: Exclude<ValidateResult, { ok: true }>
   return VALIDATE_ERROR_MESSAGES[result.reason] ?? VALIDATE_ERROR_MESSAGES.unknown;
 }
 
+/**
+ * Per-device icon override based on the model the Daikin API reports.
+ * The Daikin One Plus has a touchscreen face; everything else (Daikin
+ * One Touch, etc.) has a rotary dial. Behaviour is identical across
+ * models, so the only meaningful difference is the icon.
+ */
+function iconForModel(model: string): string {
+  return model === 'ONEPLUS'
+    ? '/drivers/thermostat/assets/onePlusIcon.svg'
+    : '/drivers/thermostat/assets/oneTouchIcon.svg';
+}
+
 class DaikinOneDriver extends Homey.Driver {
 
   async onInit(): Promise<void> {
@@ -70,17 +82,22 @@ class DaikinOneDriver extends Homey.Driver {
       const devices = await api.getDevices();
       this.log('[Pair] list_devices: got', devices.length, 'device(s)');
 
-      const result = devices.map((device) => ({
-        name: device.name,
-        data: {
-          id: device.id,
-        },
-        store: {
-          model: device.model,
-          firmwareVersion: device.firmwareVersion,
-          locationName: device.locationName,
-        },
-      }));
+      const result = devices.map((device) => {
+        const icon = iconForModel(device.model);
+        this.log(`[Pair] device "${device.name}" model="${device.model}" → icon=${icon}`);
+        return {
+          name: device.name,
+          data: {
+            id: device.id,
+          },
+          store: {
+            model: device.model,
+            firmwareVersion: device.firmwareVersion,
+            locationName: device.locationName,
+          },
+          icon,
+        };
+      });
 
       this.log('[Pair] list_devices: returning', result.length, 'device(s)');
       return result;

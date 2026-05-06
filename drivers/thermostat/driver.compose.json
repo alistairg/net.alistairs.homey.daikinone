@@ -71,7 +71,8 @@
     }
   ],
   "images": {
-    "small": "/drivers/thermostat/assets/images/small.png",
-    "large": "/drivers/thermostat/assets/images/large.png"
+    "small": "/drivers/thermostat/assets/images/driver_s.jpg",
+    "large": "/drivers/thermostat/assets/images/driver_l.jpg",
+    "xlarge": "/drivers/thermostat/assets/images/driver_xl.jpg"
   }
 }

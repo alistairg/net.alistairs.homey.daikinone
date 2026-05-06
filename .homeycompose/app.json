@@ -24,9 +24,9 @@
     ]
   },
   "images": {
-    "small": "/assets/images/small.png",
-    "large": "/assets/images/large.png",
-    "xlarge": "/assets/images/xlarge.png"
+    "small": "/assets/images/app_sm.jpg",
+    "large": "/assets/images/app_lg.jpg",
+    "xlarge": "/assets/images/app_xl.jpg"
   },
   "author": {
     "name": "Alistair"

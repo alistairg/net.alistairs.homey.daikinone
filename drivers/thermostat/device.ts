@@ -56,6 +56,16 @@ class DaikinOneThermostat extends Homey.Device {
     await super.onInit();
     this.log('DaikinOneThermostat initialized:', this.getName());
 
+    // Log the stored model + firmware so we can pin down what the Daikin
+    // API returns for each hardware variant. This drives iconForModel()
+    // in driver.ts — currently we hedge based on `includes('PLUS')` and
+    // `includes('TOUCH')` but want to confirm the actual strings.
+    this.log(
+      `Device hardware: model="${this.getStoreValue('model')}" `
+      + `firmware="${this.getStoreValue('firmwareVersion')}" `
+      + `location="${this.getStoreValue('locationName')}"`,
+    );
+
     if (!this.api) {
       await this.setUnavailable('No credentials configured. Please re-pair the device.');
       return;
