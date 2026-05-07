@@ -1,0 +1,40 @@
+name: Publish to Homey
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Write env.json
+        env:
+          DAIKIN_API_KEY: ${{ secrets.DAIKIN_API_KEY }}
+        run: |
+          node -e 'require("fs").writeFileSync("env.json", JSON.stringify({ DAIKIN_API_KEY: process.env.DAIKIN_API_KEY }))'
+
+      - name: Validate
+        uses: athombv/github-action-homey-app-validate@master
+        with:
+          level: publish
+
+      - name: Publish
+        id: publish
+        uses: athombv/github-action-homey-app-publish@master
+        with:
+          personal_access_token: ${{ secrets.HOMEY_PAT }}
+
+      - name: Summary
+        run: echo "Published to ${{ steps.publish.outputs.url }}" >> $GITHUB_STEP_SUMMARY
