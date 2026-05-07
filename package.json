@@ -1,6 +1,6 @@
 {
   "name": "net.alistairs.daikinone",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "main": "app.js",
   "scripts": {
     "build": "tsc && npm run copy-assets",

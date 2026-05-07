@@ -10,5 +10,8 @@
   },
   "1.0.3": {
     "en": "Author name, expanded readme, support topic link, and a couple of minor manifest tweaks. No functional changes."
+  },
+  "1.0.4": {
+    "en": "Source code is now publicly available on GitHub. No functional changes."
   }
 }
